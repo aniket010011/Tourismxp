@@ -115,7 +115,7 @@ elif page == "🎯 Recommendation":
     st.subheader("Attraction Recommendation")
 
     # safety check
-    if rec_df is None:
+    if rec_df is None or item_features is None or item_id_to_pos is None:
         st.warning("⚠️ Recommender artifacts not found in /artifacts")
         st.stop()
 
@@ -129,29 +129,51 @@ elif page == "🎯 Recommendation":
     top_n = st.slider("Number of recommendations", 3, 10, 5)
 
     # -----------------------------
-    # RECOMMENDER FUNCTION
+    # CORRECT RECOMMENDER FUNCTION
     # -----------------------------
     def recommend_items(attraction_name, top_n=5):
         try:
-            idx = rec_df.index[rec_df["Attraction"] == attraction_name][0]
+            # ✅ Step 1: get AttractionId
+            attraction_id = rec_df.loc[
+                rec_df["Attraction"] == attraction_name,
+                "AttractionId"
+            ].values[0]
 
+            # ✅ Step 2: map to matrix position
+            if attraction_id not in item_id_to_pos:
+                st.error("Attraction not found in similarity matrix.")
+                return []
+
+            idx = item_id_to_pos[attraction_id]
+
+            # ✅ Step 3: get similarity row
             similarity_scores = list(enumerate(item_features[idx]))
+
+            # ✅ Step 4: sort
             similarity_scores = sorted(
                 similarity_scores,
                 key=lambda x: x[1],
                 reverse=True
-            )
+            )[1: top_n + 1]
 
-            top_items = similarity_scores[1: top_n + 1]
-
+            # ✅ Step 5: map back to attractions
             recommendations = []
-            for i in top_items:
-                recommendations.append(rec_df.iloc[i[0]]["Attraction"])
+
+            for pos, score in similarity_scores:
+                rec_item_id = list(item_id_to_pos.keys())[list(item_id_to_pos.values()).index(pos)]
+
+                rec_name = rec_df.loc[
+                    rec_df["AttractionId"] == rec_item_id,
+                    "Attraction"
+                ].values
+
+                if len(rec_name) > 0:
+                    recommendations.append(rec_name[0])
 
             return recommendations
 
         except Exception as e:
-            st.error(f"Recommendation error: {e}")
+            st.error(f"Recommendation error: {str(e)}")
             return []
 
     # -----------------------------
