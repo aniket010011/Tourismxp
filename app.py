@@ -45,6 +45,13 @@ def load_artifacts():
     rec_df = safe_load("rec_df.pkl")
     tfidf_vectorizer = safe_load("tfidf_vectorizer.pkl")
 
+    # --- CREATE CONTENT MATRIX ---
+    # We transform the text data into the numeric TF-IDF matrix needed for cosine similarity
+    content_matrix = None
+    if item_features is not None and tfidf_vectorizer is not None:
+        if "content" in item_features.columns:
+            content_matrix = tfidf_vectorizer.transform(item_features["content"])
+
     return (
         reg_pipeline,
         clf_pipeline,
@@ -53,6 +60,7 @@ def load_artifacts():
         item_id_to_pos,
         rec_df,
         tfidf_vectorizer,
+        content_matrix
     )
 
 
@@ -64,6 +72,7 @@ def load_artifacts():
     item_id_to_pos,
     rec_df,
     tfidf_vectorizer,
+    content_matrix
 ) = load_artifacts()
 
 # ======================================================
@@ -126,7 +135,7 @@ elif page == "🎯 Recommendation":
     st.subheader("Attraction Recommendation")
 
     # ---------- HARD SAFETY ----------
-    if rec_df is None or item_features is None:
+    if rec_df is None or item_features is None or content_matrix is None:
         st.error("❌ Recommender artifacts missing.")
         st.stop()
 
@@ -152,28 +161,33 @@ elif page == "🎯 Recommendation":
     # ======================================================
     def recommend_items(attraction_name, top_n=5):
         try:
-            # find index safely
-            matches = rec_df.index[rec_df["Attraction"] == attraction_name]
+            # 1. Look up the specific AttractionId from rec_df
+            matches = rec_df[rec_df["Attraction"] == attraction_name]
 
             if len(matches) == 0:
                 return []
 
-            idx = int(matches[0])  
+            attraction_id = matches["AttractionId"].iloc[0]
 
-            # ensure numpy array
-            features = np.array(item_features)
+            # 2. Get the correct row index for this item in item_features
+            if attraction_id not in item_id_to_pos:
+                return []
+                
+            idx = item_id_to_pos[attraction_id]
 
-            # cosine similarity
+            # 3. Compute cosine similarity using the proper TF-IDF matrix
             sim_scores = cosine_similarity(
-                [features[idx]],
-                features
-            )[0]
+                content_matrix[idx],
+                content_matrix
+            ).flatten()
 
-            # get top indices
+            # 4. Get the indices of the highest similarity scores
+            # (argsort sorts ascending, so we reverse it with [::-1], and skip the first one since it's the exact same item)
             similar_indices = np.argsort(sim_scores)[::-1][1: top_n + 1]
 
+            # 5. Look up the resulting names in the item_features dataframe
             recommendations = (
-                rec_df.iloc[similar_indices]["Attraction"]
+                item_features.iloc[similar_indices]["Attraction"]
                 .astype(str)
                 .tolist()
             )
