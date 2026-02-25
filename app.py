@@ -52,131 +52,51 @@ def load_artifacts():
 ) = load_artifacts()
 
 # =====================================================
-# Recommender Function (FIXED)
+# Recommender Function
 # =====================================================
-def recommend_items(attraction_name, top_n=5):
+def get_recommendations(attraction_name, top_n=5):
     try:
-        # get AttractionId
-        attraction_id = rec_df.loc[
-            rec_df["Attraction"] == attraction_name,
-            "AttractionId",
-        ].values[0]
+        # --- STEP 1: name → AttractionId ---
+        match = rec_df[rec_df["Attraction"] == attraction_name]
 
-        # 🔥 CRITICAL FIX
-        attraction_id = int(attraction_id)
-
-        if attraction_id not in item_id_to_pos:
+        if match.empty:
+            st.warning("Attraction not found in data.")
             return []
 
-        idx = item_id_to_pos[attraction_id]
+        attraction_id = match["AttractionId"].iloc[0]
 
-        similarity_scores = list(enumerate(item_features[idx]))
-        similarity_scores = sorted(similarity_scores, key=lambda x: x[1], reverse=True)[1 : top_n + 1]
+        # --- STEP 2: AttractionId → position ---
+        if attraction_id not in item_id_to_pos:
+            st.warning("Attraction ID not in similarity matrix.")
+            return []
 
-        # fast reverse map
-        pos_to_item = {v: k for k, v in item_id_to_pos.items()}
+        pos = item_id_to_pos[attraction_id]
 
-        recommendations = []
-        for pos, score in similarity_scores:
-            rec_item_id = pos_to_item.get(pos)
-            if rec_item_id is None:
-                continue
+        # --- STEP 3: similarity ---
+        sim_scores = cosine_similarity(
+            item_features[pos].reshape(1, -1),
+            item_features
+        ).flatten()
 
-            rec_name = rec_df.loc[
-                rec_df["AttractionId"] == rec_item_id,
-                "Attraction",
-            ]
+        # remove itself
+        sim_scores[pos] = -1
 
-            if len(rec_name) > 0:
-                recommendations.append(rec_name.values[0])
+        top_indices = sim_scores.argsort()[-top_n:][::-1]
+
+        # --- STEP 4: map back to names ---
+        reverse_map = {v: k for k, v in item_id_to_pos.items()}
+
+        recommended_ids = [reverse_map[i] for i in top_indices]
+
+        recommendations = (
+            rec_df[rec_df["AttractionId"].isin(recommended_ids)]
+            ["Attraction"]
+            .drop_duplicates()
+            .tolist()
+        )
 
         return recommendations
 
     except Exception as e:
         st.error(f"Recommendation error: {e}")
         return []
-
-
-# =====================================================
-# Sidebar Navigation
-# =====================================================
-st.sidebar.title("Choose Function")
-page = st.sidebar.selectbox(
-    "",
-    ["Rating Prediction", "Recommendation"],
-)
-
-# =====================================================
-# Title
-# =====================================================
-st.title("🌍 Tourism Experience Analytics")
-
-# =====================================================
-# PAGE 1 — PREDICTION
-# =====================================================
-if page == "Rating Prediction":
-    st.subheader("Predict Expected Rating")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        visit_year = st.number_input("Visit Year", value=2024)
-        visit_month = st.number_input("Visit Month", min_value=1, max_value=12, value=6)
-
-    with col2:
-        visit_mode = st.selectbox("Visit Mode", label_encoder.classes_)
-        country = st.selectbox("Country", sorted(rec_df.get("Country", pd.Series(["Indonesia"])).unique()))
-
-    with col3:
-        region = st.selectbox("Region", sorted(rec_df.get("Region", pd.Series(["Asia"])).unique()))
-        attraction_type = st.selectbox(
-            "Attraction Type",
-            sorted(rec_df.get("AttractionType", pd.Series(["Temple"])).unique()),
-        )
-
-    if st.button("Predict Rating"):
-        try:
-            input_df = pd.DataFrame(
-                {
-                    "VisitYear": [visit_year],
-                    "VisitMonth": [visit_month],
-                    "VisitMode": [visit_mode],
-                    "Country": [country],
-                    "Region": [region],
-                    "AttractionType": [attraction_type],
-                }
-            )
-
-            # regression
-            rating_pred = regression_pipeline.predict(input_df)[0]
-
-            # classification
-            visit_mode_encoded = classification_pipeline.predict(input_df)[0]
-            visit_mode_label = label_encoder.inverse_transform([visit_mode_encoded])[0]
-
-            st.success(f"⭐ Predicted Rating: {rating_pred:.2f}")
-            st.info(f"🧭 Predicted Visit Mode: {visit_mode_label}")
-
-        except Exception as e:
-            st.error(f"Prediction failed: {e}")
-
-# =====================================================
-# PAGE 2 — RECOMMENDATION
-# =====================================================
-else:
-    st.subheader("Attraction Recommendation")
-
-    attraction_list = sorted(rec_df["Attraction"].dropna().unique())
-
-    selected_attraction = st.selectbox("Choose an attraction", attraction_list)
-    top_n = st.slider("Number of recommendations", 1, 10, 5)
-
-    if st.button("Get Recommendations"):
-        recs = recommend_items(selected_attraction, top_n)
-
-        if not recs:
-            st.warning("No recommendations found.")
-        else:
-            st.success("Recommended Attractions")
-            for i, r in enumerate(recs, 1):
-                st.write(f"{i}. {r}")
